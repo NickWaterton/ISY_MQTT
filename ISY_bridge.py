@@ -2,21 +2,13 @@
 
 # Author: Nick Waterton <nick.waterton@med.ge.com>
 # Description: OH interface to ISY controller for Inseton devices via MQTT
+# Uses pyisy python library https://github.com/automicus/PyISY 3.x.x branch
 # N Waterton 24th September 2019 V1.0: initial release
 # re-written for asyncio 9th December 2020: complete re-write
-# Uses pyisy python library https://github.com/automicus/PyISY 3.x.x branch
-'''
-Note: fixes to be made to PyIsy library
-for python 3.6 (OK for python 3.7)
-isy.py and websocket.py change asyncio.get_running_loop() to
-try:
-    self.loop = asyncio.get_running_loop() #python 3.7 only
-except AttributeError:
-    self.loop = asyncio.get_event_loop()   #python 3.6
-    
-connection.py change if sys.version_info < (3, 7): to
-if sys.version_info < (3, 6):
+# N Waterton 23rd Dec 2020 V2.0.1; Moved python 3.6 fixes from PyISy to here (monkeypatch)
 
+'''
+Note: fixes to be made to PyIsy library    
 To fix several issues with change notifications in
 node.py change async def update ...
 elif hint is not None:
@@ -51,7 +43,48 @@ from xml.dom import minidom
 import asyncio
 
 
-__version__ = __VERSION__ = "2.0.0"
+__version__ = __VERSION__ = "2.0.1"
+
+def monkeypatch():
+    #monkeypatch to allow running in python 3.6
+    _LOGGER = logging.getLogger('Main')
+    _LOGGER.info('Monkeypatching for python Version less than 3.7')
+    
+    asyncio.get_running_loop = asyncio.get_event_loop
+    
+    import ssl
+    #from connection.py
+    def can_https(tls_ver):
+        """
+        Verify minimum requirements to use an HTTPS connection.
+
+        Returns boolean indicating whether HTTPS is available.
+        """
+        output = True
+
+        # check python version
+        if sys.version_info < (3, 6):   #modify from 3, 7 to 3, 6
+            _LOGGER.error("PyISY cannot use HTTPS: Invalid Python version. See docs.")
+            output = False
+
+        # check that Python was compiled against correct OpenSSL lib
+        if "PROTOCOL_TLSv1_1" not in dir(ssl):
+            _LOGGER.error(
+                "PyISY cannot use HTTPS: Compiled against old OpenSSL "
+                + "library. See docs."
+            )
+            output = False
+
+        # check the requested TLS version
+        if tls_ver not in [1.1, 1.2]:
+            _LOGGER.error(
+                "PyISY cannot use HTTPS: Only TLS 1.1 and 1.2 are supported "
+                + "by the ISY controller."
+            )
+            output = False
+
+        return output
+    pyisy.connection.can_https = can_https
 
 def pprint(obj):
     """Pretty JSON dump of an object."""
@@ -661,6 +694,9 @@ def main():
     
     #register signal handler
     signal.signal(signal.SIGTERM, sigterm_handler)
+    
+    if sys.version_info < (3, 7):
+        monkeypatch()
     
     #ISY connection
     isy_ip = arg.ipaddress
